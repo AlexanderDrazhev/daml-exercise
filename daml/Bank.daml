@@ -1,0 +1,183 @@
+-- | Bank module: Factory (bank creates accounts), Account (deposits, withdrawals,
+-- | peer transfers via TransferRequest), and Transaction (audit trail).
+module Bank where
+
+import DA.Optional (fromSomeNote)
+
+-- | Bank authority: can create accounts and perform bank-to-bank transfers.
+template Factory with
+    bank : Party
+    public : Party
+  where
+    signatory bank
+    observer public
+
+    nonconsuming choice CreateAccount : ContractId Account with
+        owner : Party
+      controller bank
+      do
+        create Account with
+          bank = bank
+          owner = owner
+          balance = 0.0
+          following = []
+
+    nonconsuming choice BankTransfer : () with
+        fromOwner : Party
+        toOwner : Party
+        amount : Decimal
+      controller bank
+      do
+        fromOpt <- lookupByKey @Account (bank, fromOwner)
+        toOpt <- lookupByKey @Account (bank, toOwner)
+        let fromCid = fromSomeNote "From account not found" fromOpt
+        let toCid = fromSomeNote "To account not found" toOpt
+        fromAccount <- fetch fromCid
+        toAccount <- fetch toCid
+        assertMsg "Amount must be positive" (amount > 0.0)
+        assertMsg "Cannot transfer to self" (fromOwner /= toOwner)
+        assertMsg "Insufficient balance" (fromAccount.balance >= amount)
+        archive fromCid
+        create fromAccount with balance = fromAccount.balance - amount
+        archive toCid
+        create toAccount with balance = toAccount.balance + amount
+        create Transaction with
+          bank = bank
+          owner = fromOwner
+          amount = -amount
+          transactionType = "BankTransfer"
+          counterparty = Some toOwner
+        create Transaction with
+          bank = bank
+          owner = toOwner
+          amount = amount
+          transactionType = "BankTransfer"
+          counterparty = Some fromOwner
+        pure ()
+
+-- | Immutable audit record for an account movement.
+template Transaction with
+    bank : Party
+    owner : Party
+    amount : Decimal
+    transactionType : Text
+    counterparty : Optional Party
+  where
+    signatory bank
+    observer owner
+
+-- | Customer account at the bank: balance and list of parties they can transfer to.
+template Account with
+    bank : Party
+    owner : Party
+    balance : Decimal
+    following : [Party]
+  where
+    signatory bank
+    observer owner
+
+    key (bank, owner) : (Party, Party)
+    maintainer key._1
+
+    ensure balance >= 0.0
+
+    nonconsuming choice Deposit : ContractId Account with
+        amount : Decimal
+      controller owner
+      do
+        assertMsg "Amount must be positive" (amount > 0.0)
+        create Transaction with
+          bank = bank
+          owner = owner
+          amount = amount
+          transactionType = "Deposit"
+          counterparty = None
+        archive self
+        create this with balance = balance + amount
+
+    nonconsuming choice Withdraw : ContractId Account with
+        amount : Decimal
+      controller owner
+      do
+        assertMsg "Amount must be positive" (amount > 0.0)
+        assertMsg "Insufficient balance" (balance >= amount)
+        create Transaction with
+          bank = bank
+          owner = owner
+          amount = -amount
+          transactionType = "Withdraw"
+          counterparty = None
+        archive self
+        create this with balance = balance - amount
+
+    nonconsuming choice CreateTransferRequest : ContractId TransferRequest with
+        recipient : Party
+        amount : Decimal
+      controller owner
+      do
+        assertMsg "Amount must be positive" (amount > 0.0)
+        assertMsg "Insufficient balance" (balance >= amount)
+        assertMsg "Cannot transfer to yourself" (recipient /= owner)
+        assertMsg "Can only transfer to users you follow" (elem recipient following)
+        create TransferRequest with
+          sender = owner
+          recipient = recipient
+          amount = amount
+          bank = bank
+
+    nonconsuming choice UpdateFollowing : ContractId Account with
+        newFollowing : [Party]
+      controller owner
+      do
+        archive self
+        create this with following = newFollowing
+
+-- | Request from sender to transfer amount to recipient; bank exercises ExecuteTransfer.
+template TransferRequest with
+    sender : Party
+    recipient : Party
+    amount : Decimal
+    bank : Party
+  where
+    signatory sender
+    observer bank
+
+    ensure amount > 0.0
+
+    nonconsuming choice ExecuteTransfer : () with
+      controller bank
+      do
+        senderOpt <- lookupByKey @Account (bank, sender)
+        recipientOpt <- lookupByKey @Account (bank, recipient)
+        let senderCid = fromSomeNote "Sender account not found" senderOpt
+        let recipientCid = fromSomeNote "Recipient account not found" recipientOpt
+        assertMsg "Cannot transfer to the same account" (senderCid /= recipientCid)
+        senderAccount <- fetch senderCid
+        recipientAccount <- fetch recipientCid
+        assertMsg "Sender must match" (senderAccount.owner == sender)
+        assertMsg "Recipient must match" (recipientAccount.owner == recipient)
+        assertMsg "Can only transfer to users sender follows" (elem recipient senderAccount.following)
+        assertMsg "Insufficient balance" (senderAccount.balance >= amount)
+        archive senderCid
+        create senderAccount with balance = senderAccount.balance - amount
+        archive recipientCid
+        create recipientAccount with balance = recipientAccount.balance + amount
+        create Transaction with
+          bank = bank
+          owner = sender
+          amount = -amount
+          transactionType = "Transfer"
+          counterparty = Some recipient
+        create Transaction with
+          bank = bank
+          owner = recipient
+          amount = amount
+          transactionType = "Transfer"
+          counterparty = Some sender
+        pure ()
+
+    choice Complete : () with
+      controller bank
+      do
+        archive self
+        pure ()

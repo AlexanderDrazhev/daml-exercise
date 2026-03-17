@@ -1,0 +1,15 @@
+.root {
+  @apply animate-spin rounded-full border-solid border-primary border-r-transparent;
+}
+
+.sm {
+  @apply h-4 w-4 border-2;
+}
+
+.md {
+  @apply h-8 w-8 border-2;
+}
+
+.lg {
+  @apply h-12 w-12 border-[3px];
+}

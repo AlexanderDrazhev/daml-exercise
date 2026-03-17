@@ -1,0 +1,43 @@
+{
+  "name": "create-daml-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext .ts,.tsx",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@daml.js/create-daml-app": "file:daml.js/create-daml-app-0.1.0",
+    "@daml/ledger": "2.10.3",
+    "@daml/react": "2.10.3",
+    "@daml/types": "2.10.3",
+    "@daml/hub-react": "^1.0.0",
+    "axios": "^1.6.0",
+    "clsx": "^2.1.0",
+    "jwt-simple": "^0.5.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/jwt-simple": "^0.5.33",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.4.0",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "~5.6.0",
+    "vite": "^6.0.0",
+    "vite-plugin-node-polyfills": "^0.25.0"
+  },
+  "overrides": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  }
+}

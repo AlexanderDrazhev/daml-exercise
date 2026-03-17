@@ -1,0 +1,8 @@
+-- | Minimal Hello World template for testing ledger connectivity.
+module HelloWorld where
+
+template HelloWorld with
+    sender : Party
+    message : Text
+  where
+    signatory sender

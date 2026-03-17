@@ -1,0 +1,18 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+.DS_Store
+/.daml
+build
+dist
+node_modules
+
+*.log
+log/
+
+.env
+!.env.example
+
+ui/daml.js
+
+# Nested git repo (reference template)
+reference-projects/nestjs-template/

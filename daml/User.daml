@@ -1,0 +1,54 @@
+-- | User and Alias: social graph (follow/unfollow) and display-name alias on a public party.
+module User where
+
+-- | User profile: party and the list of parties they follow (for transfers and discovery).
+template User with
+    username : Party
+    following : [Party]
+    public : Party
+  where
+    signatory username
+    observer following
+    observer public
+
+    key username : Party
+    maintainer key
+
+    nonconsuming choice Follow : ContractId User with
+        userToFollow : Party
+      controller username
+      do
+        assertMsg "You cannot follow yourself" (userToFollow /= username)
+        assertMsg "You cannot follow the same user twice" (notElem userToFollow following)
+        archive self
+        create this with following = userToFollow :: following
+
+    nonconsuming choice Unfollow : ContractId User with
+        userToUnfollow : Party
+      controller username
+      do
+        assertMsg "You are not following this user" (elem userToUnfollow following)
+        archive self
+        create this with following = filter (/= userToUnfollow) following
+
+-- | Display name (alias) for a party, visible on the public party.
+template Alias with
+    username : Party
+    alias : Text
+    public : Party
+  where
+    signatory username
+    observer public
+
+    key (username, public) : (Party, Party)
+    maintainer key._1
+
+    ensure alias /= ""
+
+    nonconsuming choice Change : ContractId Alias with
+        newAlias : Text
+      controller username
+      do
+        assertMsg "Alias cannot be empty" (newAlias /= "")
+        archive self
+        create this with alias = newAlias
