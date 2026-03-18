@@ -7,7 +7,8 @@ export type TemplateName =
   | 'Factory'
   | 'Account'
   | 'Transaction'
-  | 'TransferRequest';
+  | 'TransferRequest'
+  | 'PaymentRequest';
 
 export interface ContractResult {
   contractId: string;

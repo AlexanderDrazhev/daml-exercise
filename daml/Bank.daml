@@ -181,3 +181,40 @@ template TransferRequest with
       do
         archive self
         pure ()
+
+-- | Request from creditor to be paid by payer. Creditor creates it; payer pays by doing a
+-- | normal transfer (CreateTransferRequest on their account, then bank ExecuteTransfer).
+-- | No Pay choice on this contract — paying reuses the existing transfer flow.
+template PaymentRequest with
+    creditor : Party
+    payer : Party
+    amount : Decimal
+    bank : Party
+    message : Optional Text
+    requestId : Text
+  where
+    signatory creditor
+    observer payer
+
+    key (creditor, requestId) : (Party, Text)
+    maintainer key._1
+
+    ensure amount > 0.0
+
+    choice Cancel : () with
+      controller creditor
+      do
+        archive self
+        pure ()
+
+    choice Decline : () with
+      controller payer
+      do
+        archive self
+        pure ()
+
+    choice MarkPaid : () with
+      controller payer
+      do
+        archive self
+        pure ()

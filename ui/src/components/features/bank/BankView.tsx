@@ -7,11 +7,26 @@ import { Card, CardHeader, CardContent } from '../../ui/Card';
 import { LoadingScreen } from '../../layout/LoadingScreen';
 import { bankApi } from '../../../api/bankApi';
 import { accountsApi } from '../../../api/accountsApi';
+import {
+  paymentRequestStatusApi,
+  type PaymentRequestStatusType,
+} from '../../../api/paymentRequestStatusApi';
 
 interface BankViewProps {
   token: string;
   myFollowing?: string[];
   partyToAlias?: Map<string, string>;
+}
+
+interface PaymentRequestItem {
+  contractId: string;
+  payload: {
+    creditor: string;
+    payer: string;
+    amount: string;
+    message?: string | null;
+    requestId: string;
+  };
 }
 
 export default function BankView({ token, myFollowing = [], partyToAlias = new Map() }: BankViewProps) {
@@ -37,13 +52,27 @@ export default function BankView({ token, myFollowing = [], partyToAlias = new M
   const [bankTransferFrom, setBankTransferFrom] = useState('');
   const [bankTransferTo, setBankTransferTo] = useState('');
   const [bankTransferAmount, setBankTransferAmount] = useState('');
+  const [paymentRequests, setPaymentRequests] = useState<PaymentRequestItem[]>(
+    [],
+  );
+  const [requestPayer, setRequestPayer] = useState('');
+  const [requestAmount, setRequestAmount] = useState('');
+  const [requestMessage, setRequestMessage] = useState('');
+  const [paymentRequestStatusMap, setPaymentRequestStatusMap] = useState<
+    Record<string, PaymentRequestStatusType>
+  >({});
 
   const load = useCallback(() => {
     if (!ledgerApi) return;
     setLoading(true);
     setLoadError(null);
-    const ensureBankParty = () =>
-      bankParty ? Promise.resolve(bankParty) : bankApi.getBankParty().then((partyId) => { setBankParty(partyId); return partyId; });
+    const ensureBankParty = (): Promise<string> =>
+      bankParty
+        ? Promise.resolve(bankParty)
+        : bankApi.getBankParty().then((partyId) => {
+            setBankParty(partyId);
+            return partyId;
+          });
     ensureBankParty().then((bankPartyId) => {
       const isBank = party === bankPartyId;
       if (isBank) {
@@ -53,6 +82,8 @@ export default function BankView({ token, myFollowing = [], partyToAlias = new M
           ledgerApi.query('Account'),
         ]).then(([_, txList, accountList]) => {
           setAccount(null);
+          setPaymentRequests([]);
+          setPaymentRequestStatusMap({});
           const list = (txList ?? []) as unknown as Array<{ payload: { owner?: string; amount: string; transactionType: string; counterparty?: string } }>;
           setTransactions(
             list
@@ -70,7 +101,9 @@ export default function BankView({ token, myFollowing = [], partyToAlias = new M
       return Promise.all([
         ledgerApi.fetchByKey('Account', { _1: bankPartyId, _2: party }),
         ledgerApi.query('Transaction', { owner: party }),
-      ]).then(([acc, txList]) => {
+        ledgerApi.query('PaymentRequest'),
+      ]).then(([acc, txList, prList]) => {
+        setBankParty(bankPartyId);
         const accountPayload = acc?.payload as
           | { owner: string; balance: string; following: string[] }
           | undefined;
@@ -96,6 +129,23 @@ export default function BankView({ token, myFollowing = [], partyToAlias = new M
                 (second.transactionType || '').localeCompare(first.transactionType || ''),
             ),
         );
+        const requests: PaymentRequestItem[] = (prList ?? []).map(
+          (c: { contractId: string; payload: Record<string, unknown> }) => ({
+            contractId: c.contractId,
+            payload: {
+              creditor: c.payload.creditor as string,
+              payer: c.payload.payer as string,
+              amount: String(c.payload.amount),
+              message: c.payload.message as string | null | undefined,
+              requestId: (c.payload.requestId as string) ?? '',
+            },
+          }),
+        );
+        setPaymentRequests(requests);
+        return paymentRequestStatusApi
+          .getStatusMap(requests.map((r) => r.contractId))
+          .then(setPaymentRequestStatusMap)
+          .catch(() => setPaymentRequestStatusMap({}));
       });
     })
       .catch((error: unknown) => {
@@ -105,6 +155,8 @@ export default function BankView({ token, myFollowing = [], partyToAlias = new M
         setAccount(null);
         setTransactions([]);
         setCustomerParties([]);
+        setPaymentRequests([]);
+        setPaymentRequestStatusMap({});
       })
       .finally(() => setLoading(false));
   }, [ledgerApi, party, bankParty]);
@@ -218,6 +270,92 @@ export default function BankView({ token, myFollowing = [], partyToAlias = new M
       load();
     } catch (error: unknown) {
       alert(`Transfer failed: ${getErrorMessage(error)}`);
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const createPaymentRequest = async () => {
+    const amount = parseFloat(requestAmount);
+    if (!ledgerApi || !bankParty || !requestPayer || Number.isNaN(amount) || amount <= 0) return;
+    setActing(true);
+    try {
+      await ledgerApi.create('PaymentRequest', {
+        creditor: party,
+        payer: requestPayer,
+        amount: String(amount),
+        bank: bankParty,
+        message: requestMessage.trim() || null,
+        requestId: crypto.randomUUID(),
+      });
+      setRequestPayer('');
+      setRequestAmount('');
+      setRequestMessage('');
+      load();
+    } catch (error: unknown) {
+      alert(`Failed to create request: ${getErrorMessage(error)}`);
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const payPaymentRequest = async (
+    request: {
+      contractId: string;
+      payload: { creditor: string; payer: string; amount: string };
+    },
+  ) => {
+    if (!ledgerApi || !account || !bankParty || acting) return;
+    const amount = parseFloat(request.payload.amount);
+    if (Number.isNaN(amount) || amount <= 0) return;
+    const creditor = request.payload.creditor;
+    setActing(true);
+    try {
+      let accountCid = account.contractId;
+      if (!account.following.includes(creditor)) {
+        await ledgerApi.exercise('Account', account.contractId, 'UpdateFollowing', {
+          newFollowing: [...account.following, creditor],
+        });
+        const acc = await ledgerApi.fetchByKey('Account', { _1: bankParty, _2: party });
+        if (!acc) throw new Error('Account not found after update');
+        accountCid = acc.contractId;
+      }
+      const result = await ledgerApi.exercise('Account', accountCid, 'CreateTransferRequest', {
+        recipient: creditor,
+        amount: request.payload.amount,
+      });
+      const transferRequestCid = (result as { exerciseResult: string }).exerciseResult;
+      await bankApi.executeTransfer(transferRequestCid);
+      await paymentRequestStatusApi.recordStatus(request.contractId, 'paid');
+      load();
+    } catch (error: unknown) {
+      alert(`Pay failed: ${getErrorMessage(error)}`);
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const declinePaymentRequest = async (contractId: string) => {
+    if (acting) return;
+    setActing(true);
+    try {
+      await paymentRequestStatusApi.recordStatus(contractId, 'declined');
+      load();
+    } catch (error: unknown) {
+      alert(`Decline failed: ${getErrorMessage(error)}`);
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const cancelPaymentRequest = async (contractId: string) => {
+    if (acting) return;
+    setActing(true);
+    try {
+      await paymentRequestStatusApi.recordStatus(contractId, 'canceled');
+      load();
+    } catch (error: unknown) {
+      alert(`Cancel failed: ${getErrorMessage(error)}`);
     } finally {
       setActing(false);
     }
@@ -456,6 +594,132 @@ export default function BankView({ token, myFollowing = [], partyToAlias = new M
             >
               Transfer
             </Button>
+          </div>
+        )}
+
+        {followedParties.length > 0 && (
+          <div className="flex flex-wrap gap-2 items-end">
+            <label className="flex flex-col gap-1">
+              <span className="text-muted-foreground text-sm">Request payment from</span>
+              <select
+                className="w-40 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+                value={requestPayer}
+                onChange={(event) => setRequestPayer(event.target.value)}
+                disabled={acting}
+              >
+                <option value="">Select user</option>
+                {followedParties.map((partyId) => (
+                  <option key={partyId} value={partyId}>
+                    {partyToAlias.get(partyId) ?? partyId}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Amount"
+              className="w-28 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+              value={requestAmount}
+              onChange={(event) => setRequestAmount(event.target.value)}
+              disabled={acting}
+            />
+            <input
+              type="text"
+              placeholder="Message (optional)"
+              className="w-40 rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+              value={requestMessage}
+              onChange={(event) => setRequestMessage(event.target.value)}
+              disabled={acting}
+            />
+            <Button
+              onClick={createPaymentRequest}
+              disabled={acting || !requestPayer || !requestAmount}
+            >
+              Request payment
+            </Button>
+          </div>
+        )}
+
+        {paymentRequests.length > 0 && (
+          <div>
+            <h3 className="text-sm font-medium text-foreground mb-2">
+              Payment requests
+            </h3>
+            <ul className="divide-y divide-border text-sm space-y-2">
+              {paymentRequests
+                .filter(
+                  (r) =>
+                    r.payload.creditor === party &&
+                    !paymentRequestStatusMap[r.contractId],
+                )
+                .map((request) => (
+                  <li
+                    key={request.contractId}
+                    className="py-2 flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <span>
+                      Request <strong>{request.payload.amount}</strong> from{' '}
+                      {partyToAlias.get(request.payload.payer) ??
+                        request.payload.payer}
+                      {request.payload.message
+                        ? ` — ${request.payload.message}`
+                        : ''}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => cancelPaymentRequest(request.contractId)}
+                      disabled={acting}
+                    >
+                      Cancel request
+                    </Button>
+                  </li>
+                ))}
+              {paymentRequests
+                .filter(
+                  (r) =>
+                    r.payload.payer === party &&
+                    !paymentRequestStatusMap[r.contractId],
+                )
+                .map((request) => (
+                  <li
+                    key={request.contractId}
+                    className="py-2 flex flex-wrap items-center justify-between gap-2"
+                  >
+                    <span>
+                      <strong>
+                        {partyToAlias.get(request.payload.creditor) ??
+                          request.payload.creditor}
+                      </strong>{' '}
+                      requests <strong>{request.payload.amount}</strong>
+                      {request.payload.message
+                        ? ` — ${request.payload.message}`
+                        : ''}
+                    </span>
+                    <span className="flex gap-1">
+                      <Button
+                        size="sm"
+                        onClick={() => payPaymentRequest(request)}
+                        disabled={acting}
+                      >
+                        Pay
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          declinePaymentRequest(request.contractId)
+                        }
+                        disabled={acting}
+                      >
+                        Decline
+                      </Button>
+                    </span>
+                  </li>
+                ))}
+            </ul>
           </div>
         )}
 

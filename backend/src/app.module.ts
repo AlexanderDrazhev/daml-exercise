@@ -9,6 +9,7 @@ import { AppUsersModule } from './app-users/app-users.module';
 import { BankModule } from './bank/bank.module';
 import { AccountsModule } from './accounts/accounts.module';
 import { HealthModule } from './health/health.module';
+import { PaymentRequestStatusModule } from './payment-request-status/payment-request-status.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { HealthModule } from './health/health.module';
     AccountsModule,
     BankModule,
     HealthModule,
+    PaymentRequestStatusModule,
   ],
   controllers: [AppController, ContractsController],
   providers: [AppService],
