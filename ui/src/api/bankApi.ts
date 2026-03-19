@@ -4,6 +4,16 @@ export const bankApi = {
   getBankParty: () =>
     apiClient.get<{ partyId: string }>('/api/bank/party').then((response) => response.data.partyId),
 
+  getAnnouncement: () =>
+    apiClient
+      .get<{ message: string }>('/api/bank/announcement')
+      .then((response) => response.data),
+
+  updateAnnouncement: (message: string) =>
+    apiClient
+      .post<{ ok: boolean }>('/api/bank/announcement', { message })
+      .then(() => undefined),
+
   createAccount: (partyId: string) =>
     apiClient
       .post<{ contractId: string }>('/api/bank/create-account', { partyId })

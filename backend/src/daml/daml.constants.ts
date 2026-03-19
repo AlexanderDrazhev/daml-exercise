@@ -39,4 +39,6 @@ export const TEMPLATE_IDS = {
   Transaction: `${PACKAGE_ID}:Bank:Transaction`,
   TransferRequest: `${PACKAGE_ID}:Bank:TransferRequest`,
   PaymentRequest: `${PACKAGE_ID}:Bank:PaymentRequest`,
+  BankNotice: `${PACKAGE_ID}:Bank:BankNotice`,
+  BankCustomerNotification: `${PACKAGE_ID}:Bank:BankCustomerNotification`,
 } as const;

@@ -8,7 +8,9 @@ export type TemplateName =
   | 'Account'
   | 'Transaction'
   | 'TransferRequest'
-  | 'PaymentRequest';
+  | 'PaymentRequest'
+  | 'BankNotice'
+  | 'BankCustomerNotification';
 
 export interface ContractResult {
   contractId: string;

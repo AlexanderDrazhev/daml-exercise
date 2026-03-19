@@ -36,6 +36,25 @@ export class BankController {
     return { ok: true };
   }
 
+  @Get('announcement')
+  async getAnnouncement(): Promise<{ message: string }> {
+    const message = await this.bank.getAnnouncementMessage();
+    return { message };
+  }
+
+  @Post('announcement')
+  async updateAnnouncement(@Body() body: { message?: string }) {
+    const message = body?.message;
+    if (message === undefined || typeof message !== 'string') {
+      throw new BadRequestException('message is required');
+    }
+    if (message.length > 2000) {
+      throw new BadRequestException('message must be at most 2000 characters');
+    }
+    await this.bank.updateAnnouncement(message);
+    return { ok: true };
+  }
+
   @Post('transfer')
   async bankTransfer(
     @Body() body: { fromPartyId: string; toPartyId: string; amount: string },
