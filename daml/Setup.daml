@@ -37,6 +37,8 @@ setup = do
     bank = bank
     public = public
   submit bank do
+    exerciseCmd factoryCid PublishBankNotice with
+      newMessage = "Welcome to the demo bank — deposits, transfers, and payment requests are on-ledger. Have fun exploring!"
     exerciseCmd factoryCid CreateAccount with owner = alice
     exerciseCmd factoryCid CreateAccount with owner = bob
     exerciseCmd factoryCid CreateAccount with owner = charlie

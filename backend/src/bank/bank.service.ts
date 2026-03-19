@@ -9,6 +9,33 @@ const DEFAULT_LEDGER_ID = 'create-daml-app-sandbox';
 const DEFAULT_JWT_SECRET = 'secret';
 const BANK_USER_ID = 'bank';
 
+const DEFAULT_BANK_NOTICE =
+  'Welcome to the demo bank — deposits, transfers, and payment requests are on-ledger. Have fun exploring!';
+
+function publishedAtToMicros(value: unknown): bigint {
+  if (value == null) return 0n;
+  if (typeof value === 'object' && value !== null && 'microseconds' in value) {
+    const raw = (value as { microseconds: string | number }).microseconds;
+    try {
+      return BigInt(String(raw));
+    } catch {
+      return 0n;
+    }
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    try {
+      return BigInt(value);
+    } catch {
+      return 0n;
+    }
+  }
+  if (typeof value === 'string') {
+    const ms = Date.parse(value);
+    if (!Number.isNaN(ms)) return BigInt(ms) * 1000n;
+  }
+  return 0n;
+}
+
 @Injectable()
 export class BankService {
   constructor(
@@ -139,5 +166,54 @@ export class BankService {
     );
     await this.accounts.recordTransaction(from, -amountNum, 'BankTransfer', to);
     await this.accounts.recordTransaction(to, amountNum, 'BankTransfer', from);
+  }
+
+  /**
+   * Latest bank notice from on-ledger `BankNotice` contracts (Setup publishes the first;
+   * bank updates via nonconsuming `Factory.PublishBankNotice`).
+   */
+  async getAnnouncementMessage(): Promise<string> {
+    const token = this.getBankToken();
+    const rows = await this.daml.query(
+      { templateIds: [TEMPLATE_IDS.BankNotice] },
+      token,
+    );
+    if (rows.length === 0) return DEFAULT_BANK_NOTICE;
+    let best: { message: string; t: bigint } | null = null;
+    for (const row of rows) {
+      const payload = row.payload as {
+        message?: unknown;
+        publishedAt?: unknown;
+      };
+      const message =
+        typeof payload.message === 'string' ? payload.message : '';
+      const t = publishedAtToMicros(payload.publishedAt);
+      if (!best || t > best.t) best = { message, t };
+    }
+    const msg = best?.message?.trim();
+    if (msg) return msg;
+    return DEFAULT_BANK_NOTICE;
+  }
+
+  async updateAnnouncement(newMessage: string): Promise<void> {
+    const trimmed = newMessage.trim();
+    const token = this.getBankToken();
+    const factories = await this.daml.query(
+      { templateIds: [TEMPLATE_IDS.Factory] },
+      token,
+    );
+    const factory = factories[0];
+    if (!factory) {
+      throw new Error('Factory contract not found');
+    }
+    await this.daml.exercise(
+      {
+        templateId: TEMPLATE_IDS.Factory,
+        contractId: factory.contractId,
+        choice: 'PublishBankNotice',
+        argument: { newMessage: trimmed },
+      },
+      token,
+    );
   }
 }

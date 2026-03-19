@@ -19,6 +19,9 @@ const TEMPLATE_NAME_TO_ID: Record<string, string> = {
   Account: TEMPLATE_IDS.Account as string,
   Transaction: TEMPLATE_IDS.Transaction as string,
   TransferRequest: TEMPLATE_IDS.TransferRequest as string,
+  PaymentRequest: TEMPLATE_IDS.PaymentRequest as string,
+  BankNotice: TEMPLATE_IDS.BankNotice as string,
+  BankCustomerNotification: TEMPLATE_IDS.BankCustomerNotification as string,
 };
 
 function getJwt(headers: Record<string, string | undefined>): string {
@@ -51,7 +54,7 @@ export class ContractsController {
     const templateId = TEMPLATE_NAME_TO_ID[template];
     if (!templateId) {
       throw new BadRequestException(
-        `Unknown template: ${template}. Use one of: User, Alias, HelloWorld, Factory, Account, Transaction, TransferRequest`,
+        `Unknown template: ${template}. Use one of: User, Alias, HelloWorld, Factory, Account, Transaction, TransferRequest, PaymentRequest, BankNotice, BankCustomerNotification`,
       );
     }
     const readersFiltered =
@@ -77,7 +80,7 @@ export class ContractsController {
     const templateId = TEMPLATE_NAME_TO_ID[body.template];
     if (!templateId) {
       throw new BadRequestException(
-        `Unknown template: ${body.template}. Use one of: User, Alias, HelloWorld, Factory, Account, Transaction, TransferRequest`,
+        `Unknown template: ${body.template}. Use one of: User, Alias, HelloWorld, Factory, Account, Transaction, TransferRequest, PaymentRequest, BankNotice, BankCustomerNotification`,
       );
     }
     const result = await this.daml.create(templateId, body.payload, jwt);
@@ -100,7 +103,7 @@ export class ContractsController {
     const templateId = TEMPLATE_NAME_TO_ID[body.template];
     if (!templateId) {
       throw new BadRequestException(
-        `Unknown template: ${body.template}. Use one of: User, Alias, HelloWorld, Factory, Account, Transaction, TransferRequest`,
+        `Unknown template: ${body.template}. Use one of: User, Alias, HelloWorld, Factory, Account, Transaction, TransferRequest, PaymentRequest, BankNotice, BankCustomerNotification`,
       );
     }
     const result = await this.daml.exercise(
@@ -131,7 +134,7 @@ export class ContractsController {
     const templateId = TEMPLATE_NAME_TO_ID[body.template];
     if (!templateId) {
       throw new BadRequestException(
-        `Unknown template: ${body.template}. Use one of: User, Alias, HelloWorld, Factory, Account, Transaction, TransferRequest`,
+        `Unknown template: ${body.template}. Use one of: User, Alias, HelloWorld, Factory, Account, Transaction, TransferRequest, PaymentRequest, BankNotice, BankCustomerNotification`,
       );
     }
     const result = await this.daml.exerciseByKey(
@@ -154,7 +157,7 @@ export class ContractsController {
     const templateId = TEMPLATE_NAME_TO_ID[body.template];
     if (!templateId) {
       throw new BadRequestException(
-        `Unknown template: ${body.template}. Use one of: User, Alias, HelloWorld, Factory, Account, Transaction, TransferRequest`,
+        `Unknown template: ${body.template}. Use one of: User, Alias, HelloWorld, Factory, Account, Transaction, TransferRequest, PaymentRequest, BankNotice, BankCustomerNotification`,
       );
     }
     const result = await this.daml.fetchByKey(

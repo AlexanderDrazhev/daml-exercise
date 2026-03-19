@@ -3,6 +3,32 @@
 module Bank where
 
 import DA.Optional (fromSomeNote)
+import qualified DA.Text as T
+
+-- | Per-customer message from the bank when an operation completes (deposit, transfer, etc.).
+-- | The UI formats `category`, `amount`, `balanceAfter`, and `counterparty` into readable text.
+template BankCustomerNotification with
+    bank : Party
+    recipient : Party
+    category : Text
+    amount : Decimal
+    balanceAfter : Optional Decimal
+    counterparty : Optional Party
+    createdAt : Time
+  where
+    signatory bank
+    observer recipient
+
+-- | Immutable notice on the ledger. The bank publishes updates via `Factory.PublishBankNotice`
+-- | (nonconsuming); the UI shows the latest by `publishedAt`.
+template BankNotice with
+    bank : Party
+    public : Party
+    message : Text
+    publishedAt : Time
+  where
+    signatory bank
+    observer public
 
 -- | Bank authority: can create accounts and perform bank-to-bank transfers.
 template Factory with
@@ -22,12 +48,26 @@ template Factory with
           balance = 0.0
           following = []
 
+    nonconsuming choice PublishBankNotice : () with
+        newMessage : Text
+      controller bank
+      do
+        now <- getTime
+        assertMsg "Message too long" (T.length newMessage <= 2000)
+        _ <- create BankNotice with
+          bank = bank
+          public = public
+          message = newMessage
+          publishedAt = now
+        return ()
+
     nonconsuming choice BankTransfer : () with
         fromOwner : Party
         toOwner : Party
         amount : Decimal
       controller bank
       do
+        now <- getTime
         fromOpt <- lookupByKey @Account (bank, fromOwner)
         toOpt <- lookupByKey @Account (bank, toOwner)
         let fromCid = fromSomeNote "From account not found" fromOpt
@@ -37,22 +77,42 @@ template Factory with
         assertMsg "Amount must be positive" (amount > 0.0)
         assertMsg "Cannot transfer to self" (fromOwner /= toOwner)
         assertMsg "Insufficient balance" (fromAccount.balance >= amount)
+        let fromNewBal = fromAccount.balance - amount
+        let toNewBal = toAccount.balance + amount
         archive fromCid
-        create fromAccount with balance = fromAccount.balance - amount
+        create fromAccount with balance = fromNewBal
         archive toCid
-        create toAccount with balance = toAccount.balance + amount
+        create toAccount with balance = toNewBal
         create Transaction with
           bank = bank
           owner = fromOwner
           amount = -amount
           transactionType = "BankTransfer"
           counterparty = Some toOwner
+          createdAt = now
         create Transaction with
           bank = bank
           owner = toOwner
           amount = amount
           transactionType = "BankTransfer"
           counterparty = Some fromOwner
+          createdAt = now
+        _ <- create BankCustomerNotification with
+          bank = bank
+          recipient = fromOwner
+          category = "BankTransferOut"
+          amount = amount
+          balanceAfter = Some fromNewBal
+          counterparty = Some toOwner
+          createdAt = now
+        _ <- create BankCustomerNotification with
+          bank = bank
+          recipient = toOwner
+          category = "BankTransferIn"
+          amount = amount
+          balanceAfter = Some toNewBal
+          counterparty = Some fromOwner
+          createdAt = now
         pure ()
 
 -- | Immutable audit record for an account movement.
@@ -62,6 +122,7 @@ template Transaction with
     amount : Decimal
     transactionType : Text
     counterparty : Optional Party
+    createdAt : Time
   where
     signatory bank
     observer owner
@@ -86,14 +147,25 @@ template Account with
       controller owner
       do
         assertMsg "Amount must be positive" (amount > 0.0)
+        now <- getTime
+        let newBalance = balance + amount
         create Transaction with
           bank = bank
           owner = owner
           amount = amount
           transactionType = "Deposit"
           counterparty = None
+          createdAt = now
+        _ <- create BankCustomerNotification with
+          bank = bank
+          recipient = owner
+          category = "Deposit"
+          amount = amount
+          balanceAfter = Some newBalance
+          counterparty = None
+          createdAt = now
         archive self
-        create this with balance = balance + amount
+        create this with balance = newBalance
 
     nonconsuming choice Withdraw : ContractId Account with
         amount : Decimal
@@ -101,18 +173,30 @@ template Account with
       do
         assertMsg "Amount must be positive" (amount > 0.0)
         assertMsg "Insufficient balance" (balance >= amount)
+        now <- getTime
+        let newBalance = balance - amount
         create Transaction with
           bank = bank
           owner = owner
           amount = -amount
           transactionType = "Withdraw"
           counterparty = None
+          createdAt = now
+        _ <- create BankCustomerNotification with
+          bank = bank
+          recipient = owner
+          category = "Withdraw"
+          amount = amount
+          balanceAfter = Some newBalance
+          counterparty = None
+          createdAt = now
         archive self
-        create this with balance = balance - amount
+        create this with balance = newBalance
 
     nonconsuming choice CreateTransferRequest : ContractId TransferRequest with
         recipient : Party
         amount : Decimal
+        isBillPayment : Bool
       controller owner
       do
         assertMsg "Amount must be positive" (amount > 0.0)
@@ -124,6 +208,7 @@ template Account with
           recipient = recipient
           amount = amount
           bank = bank
+          isBillPayment = isBillPayment
 
     nonconsuming choice UpdateFollowing : ContractId Account with
         newFollowing : [Party]
@@ -138,6 +223,7 @@ template TransferRequest with
     recipient : Party
     amount : Decimal
     bank : Party
+    isBillPayment : Bool
   where
     signatory sender
     observer bank
@@ -147,6 +233,7 @@ template TransferRequest with
     nonconsuming choice ExecuteTransfer : () with
       controller bank
       do
+        now <- getTime
         senderOpt <- lookupByKey @Account (bank, sender)
         recipientOpt <- lookupByKey @Account (bank, recipient)
         let senderCid = fromSomeNote "Sender account not found" senderOpt
@@ -158,26 +245,103 @@ template TransferRequest with
         assertMsg "Recipient must match" (recipientAccount.owner == recipient)
         assertMsg "Can only transfer to users sender follows" (elem recipient senderAccount.following)
         assertMsg "Insufficient balance" (senderAccount.balance >= amount)
+        let senderNewBal = senderAccount.balance - amount
+        let recipientNewBal = recipientAccount.balance + amount
         archive senderCid
-        create senderAccount with balance = senderAccount.balance - amount
+        create senderAccount with balance = senderNewBal
         archive recipientCid
-        create recipientAccount with balance = recipientAccount.balance + amount
+        create recipientAccount with balance = recipientNewBal
         create Transaction with
           bank = bank
           owner = sender
           amount = -amount
           transactionType = "Transfer"
           counterparty = Some recipient
+          createdAt = now
         create Transaction with
           bank = bank
           owner = recipient
           amount = amount
           transactionType = "Transfer"
           counterparty = Some sender
-        pure ()
+          createdAt = now
+        if isBillPayment
+          then do
+            _ <- create BankCustomerNotification with
+              bank = bank
+              recipient = sender
+              category = "BillPayment"
+              amount = amount
+              balanceAfter = None
+              counterparty = Some recipient
+              createdAt = now
+            _ <- create BankCustomerNotification with
+              bank = bank
+              recipient = recipient
+              category = "TransferIn"
+              amount = amount
+              balanceAfter = Some recipientNewBal
+              counterparty = Some sender
+              createdAt = now
+            pure ()
+          else do
+            _ <- create BankCustomerNotification with
+              bank = bank
+              recipient = sender
+              category = "TransferOut"
+              amount = amount
+              balanceAfter = Some senderNewBal
+              counterparty = Some recipient
+              createdAt = now
+            _ <- create BankCustomerNotification with
+              bank = bank
+              recipient = recipient
+              category = "TransferIn"
+              amount = amount
+              balanceAfter = Some recipientNewBal
+              counterparty = Some sender
+              createdAt = now
+            pure ()
 
     choice Complete : () with
       controller bank
+      do
+        archive self
+        pure ()
+
+-- | Request from creditor to be paid by payer. Creditor creates it; payer pays by doing a
+-- | normal transfer (CreateTransferRequest on their account, then bank ExecuteTransfer).
+-- | No Pay choice on this contract — paying reuses the existing transfer flow.
+template PaymentRequest with
+    creditor : Party
+    payer : Party
+    amount : Decimal
+    bank : Party
+    message : Optional Text
+    requestId : Text
+  where
+    signatory creditor
+    observer payer
+
+    key (creditor, requestId) : (Party, Text)
+    maintainer key._1
+
+    ensure amount > 0.0
+
+    choice Cancel : () with
+      controller creditor
+      do
+        archive self
+        pure ()
+
+    choice Decline : () with
+      controller payer
+      do
+        archive self
+        pure ()
+
+    choice MarkPaid : () with
+      controller payer
       do
         archive self
         pure ()
